@@ -130,9 +130,124 @@ elif page == "🧠 Command Center":
 
 elif page == "🤖 SDR Agent":
     st.markdown("## 🤖 Autonomous SDR Agent")
-    st.caption("AI-powered lead finding, research, personalization and outreach")
+    st.caption("AI finds leads, researches companies, writes personalized emails — you approve before sending")
     st.divider()
-    st.info("🚧 Building in Step 5 — SDR Agent")
+
+    # Campaign Setup
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        criteria = st.text_input(
+            "Target criteria",
+            placeholder="e.g. SaaS companies in London, 50-200 employees, hiring sales roles",
+            value="B2B SaaS companies in UK, 50-200 employees"
+        )
+    with col2:
+        num_leads = st.selectbox("Leads", [3, 5, 8, 10], index=1)
+
+    if "sdr_pipeline" not in st.session_state:
+        st.session_state.sdr_pipeline = []
+    if "sdr_running" not in st.session_state:
+        st.session_state.sdr_running = False
+
+    col_run, col_clear = st.columns([1, 4])
+    with col_run:
+        run_btn = st.button("🚀 Run Campaign", type="primary", use_container_width=True)
+    with col_clear:
+        if st.button("🗑️ Clear Pipeline", use_container_width=True):
+            st.session_state.sdr_pipeline = []
+            st.rerun()
+
+    if run_btn and criteria:
+        st.session_state.sdr_pipeline = []
+        progress_container = st.container()
+
+        with progress_container:
+            st.markdown("**⚡ SDR Agent Running...**")
+            status_box = st.empty()
+            progress_bar = st.progress(0)
+
+        steps_done = [0]
+
+        def update_progress(step, msg):
+            status_box.info(msg)
+            steps_done[0] += 1
+            progress_bar.progress(min(steps_done[0] / (num_leads * 3 + 2), 1.0))
+
+        try:
+            from agents.sdr_agent import run_sdr_campaign
+            pipeline = run_sdr_campaign(criteria, num_leads, callback=update_progress)
+            st.session_state.sdr_pipeline = pipeline
+            progress_bar.progress(1.0)
+            status_box.success(f"✅ Campaign complete! {len(pipeline)} leads ready for review")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    # Display Pipeline
+    if st.session_state.sdr_pipeline:
+        st.divider()
+        st.markdown(f"### 📋 Pipeline — {len(st.session_state.sdr_pipeline)} Leads")
+
+        # Summary metrics
+        pipeline = st.session_state.sdr_pipeline
+        hot = sum(1 for l in pipeline if "Hot" in l["score"])
+        warm = sum(1 for l in pipeline if "Warm" in l["score"])
+        cold = sum(1 for l in pipeline if "Cold" in l["score"])
+        approved = sum(1 for l in pipeline if l.get("approved"))
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("🔥 Hot Leads", hot)
+        m2.metric("🟡 Warm Leads", warm)
+        m3.metric("❄️ Cold Leads", cold)
+        m4.metric("✅ Approved", approved)
+
+        st.divider()
+
+        # Lead cards
+        for i, lead in enumerate(st.session_state.sdr_pipeline):
+            with st.expander(f"{lead['score']} {lead['company']} | ICP: {lead['icp_score']}/10 | {lead['industry']} | {lead['status']}", expanded=i==0):
+                col_info, col_email = st.columns([1, 2])
+
+                with col_info:
+                    st.markdown("**Company Intel**")
+                    st.caption(f"🌐 {lead['url']}")
+                    st.caption(f"👤 Target: {lead['decision_maker']}")
+                    st.caption(f"🏢 Size: {lead['size']}")
+                    st.caption(f"📊 ICP Score: {lead['icp_score']}/10")
+                    st.caption(f"💡 {lead['icp_reason']}")
+                    st.markdown("**Pain Points**")
+                    for pp in lead["pain_points"]:
+                        st.caption(f"• {pp}")
+                    st.markdown("**Buying Signals**")
+                    for bs in lead["buying_signals"]:
+                        st.caption(f"• {bs}")
+
+                with col_email:
+                    st.markdown("**✉️ Personalized Email**")
+                    st.info(f"**Subject:** {lead['email'].get('subject', '')}")
+                    st.text_area("Email body", lead['email'].get('body', ''), height=180, key=f"email_{i}")
+
+                    with st.expander("📅 Follow-up Sequence"):
+                        for j, fu in enumerate(lead.get("followups", [])):
+                            st.caption(f"**Day {[3,7][j]} Follow-up**")
+                            st.caption(f"Subject: {fu.get('subject', '')}")
+                            st.caption(fu.get('body', '')[:200] + "...")
+
+                # Human-in-the-Loop approval
+                st.divider()
+                col_approve, col_reject, col_edit = st.columns(3)
+                with col_approve:
+                    if st.button(f"✅ Approve & Queue", key=f"approve_{i}", use_container_width=True):
+                        st.session_state.sdr_pipeline[i]["approved"] = True
+                        st.session_state.sdr_pipeline[i]["status"] = "Approved ✅"
+                        st.rerun()
+                with col_reject:
+                    if st.button(f"❌ Reject", key=f"reject_{i}", use_container_width=True):
+                        st.session_state.sdr_pipeline[i]["status"] = "Rejected ❌"
+                        st.rerun()
+                with col_edit:
+                    if st.button(f"✏️ Needs Edit", key=f"edit_{i}", use_container_width=True):
+                        st.session_state.sdr_pipeline[i]["status"] = "Needs Edit ✏️"
+                        st.rerun()
 
 elif page == "💰 Revenue Intelligence":
     st.markdown("## 💰 Revenue Intelligence")

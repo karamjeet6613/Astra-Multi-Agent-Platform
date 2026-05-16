@@ -67,9 +67,66 @@ if page == "🏠 Home":
 
 elif page == "🧠 Command Center":
     st.markdown("## 🧠 Command Center")
-    st.caption("Orchestrate multiple AI agents on complex enterprise tasks")
+    st.caption("Give Astra a complex task — watch multiple agents collaborate in real-time")
     st.divider()
-    st.info("🚧 Building in Step 4 — Multi-Agent Orchestration")
+
+    # Sample tasks
+    st.markdown("**💡 Try these multi-agent tasks:**")
+    sample_tasks = [
+        "Why is APAC underperforming and what should HR do to retain top sales talent there?",
+        "Analyze our Q4 revenue and suggest a hiring plan for next quarter",
+        "Find recent AI trends in enterprise sales and suggest how we can use them",
+        "Which sales reps need coaching and what HR resources are available for them?",
+        "Summarize our pipeline health and recommend budget reallocation",
+    ]
+    cols = st.columns(2)
+    for i, task in enumerate(sample_tasks):
+        with cols[i % 2]:
+            if st.button(task, key=f"cmd_{i}", use_container_width=True):
+                st.session_state.cmd_task = task
+
+    st.divider()
+
+    if "cmd_messages" not in st.session_state:
+        st.session_state.cmd_messages = []
+    if "cmd_task" not in st.session_state:
+        st.session_state.cmd_task = ""
+
+    # Display history
+    for msg in st.session_state.cmd_messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+            if msg.get("plan"):
+                with st.expander("🗺️ Agent Plan"):
+                    for agent, subtask in msg["plan"]:
+                        st.caption(f"• **{agent.upper()}**: {subtask}")
+
+    task = st.chat_input("Give Astra a complex task...") or st.session_state.cmd_task
+    if st.session_state.cmd_task:
+        st.session_state.cmd_task = ""
+
+    if task:
+        st.session_state.cmd_messages.append({"role": "user", "content": task})
+        with st.chat_message("user"):
+            st.write(task)
+
+        with st.chat_message("assistant"):
+            st.markdown("**🧠 Astra is orchestrating...**")
+            live_container = st.container()
+            with st.spinner("Agents working..."):
+                try:
+                    from agents.orchestrator import orchestrate
+                    result = orchestrate(task, stream_container=live_container)
+                    st.divider()
+                    st.markdown("**📋 Final Response:**")
+                    st.write(result["final"])
+                    st.session_state.cmd_messages.append({
+                        "role": "assistant",
+                        "content": result["final"],
+                        "plan": result["plan"]
+                    })
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
 elif page == "🤖 SDR Agent":
     st.markdown("## 🤖 Autonomous SDR Agent")

@@ -251,9 +251,276 @@ elif page == "🤖 SDR Agent":
 
 elif page == "💰 Revenue Intelligence":
     st.markdown("## 💰 Revenue Intelligence")
-    st.caption("AE pipeline view + CFO analytics — toggle between perspectives")
+
+    import pandas as pd
+    import plotly.express as px
+
+    DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "sales_docs")
+    FIN_DIR = os.path.join(os.path.dirname(__file__), "data", "finance_docs")
+
+    @st.cache_data
+    def load_all_data():
+        revenue_df = pd.read_csv(os.path.join(DATA_DIR, "revenue_by_region_2024.csv"))
+        pipeline_df = pd.read_csv(os.path.join(DATA_DIR, "pipeline_deals_Q1_2025.csv"))
+        reps_df = pd.read_csv(os.path.join(DATA_DIR, "sales_rep_performance_2024.csv"))
+        pnl_df = pd.read_csv(os.path.join(FIN_DIR, "pnl_summary_2024.csv"))
+        return revenue_df, pipeline_df, reps_df, pnl_df
+
+    revenue_df, pipeline_df, reps_df, pnl_df = load_all_data()
+
+    # ── Toggle ────────────────────────────────────
+    view = st.toggle("Switch to CFO View 💼", value=False)
+    view_label = "💼 CFO View" if view else "🎯 AE View"
+    st.caption(f"Currently showing: **{view_label}**")
     st.divider()
-    st.info("🚧 Building in Step 6 — Revenue Intelligence")
+
+    if not view:
+        # ── AE VIEW ──────────────────────────────
+        st.markdown("### 🎯 My Pipeline Today")
+
+        # Pipeline stage breakdown
+        active = pipeline_df[~pipeline_df["Stage"].isin(["Closed Won", "Closed Lost"])]
+        won = pipeline_df[pipeline_df["Stage"] == "Closed Won"]
+        lost = pipeline_df[pipeline_df["Stage"] == "Closed Lost"]
+        at_risk = active[active["Days_In_Stage"] > 20]
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("🟢 Active Deals", len(active), f"${active['ARR_USD'].sum()/1e6:.1f}M pipeline")
+        k2.metric("✅ Closed Won", len(won), f"${won['ARR_USD'].sum()/1e3:.0f}K ARR")
+        k3.metric("🔴 At Risk", len(at_risk), f"{len(at_risk)} deals >20 days no movement")
+        k4.metric("❌ Closed Lost", len(lost), f"${lost['ARR_USD'].sum()/1e3:.0f}K lost")
+
+        st.divider()
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Pipeline by Stage**")
+            stage_data = active.groupby("Stage")["ARR_USD"].sum().reset_index()
+            fig1 = px.funnel(stage_data, x="ARR_USD", y="Stage", height=280,
+                            color_discrete_sequence=["#0f3460"])
+            fig1.update_layout(margin=dict(t=10, b=10))
+            st.plotly_chart(fig1, use_container_width=True)
+
+        with col2:
+            st.markdown("**🔴 At Risk Deals — Need Action**")
+            if len(at_risk) > 0:
+                at_risk_display = at_risk[["Company", "Stage", "ARR_USD", "Days_In_Stage", "AE_Owner"]].copy() if "Company" in at_risk.columns else at_risk[["Stage", "ARR_USD", "Days_In_Stage", "AE_Owner", "Probability_Pct"]].head(8).copy()
+                at_risk_display["ARR_USD"] = at_risk_display["ARR_USD"].apply(lambda x: f"${x/1e3:.0f}K")
+                st.dataframe(at_risk_display, use_container_width=True, hide_index=True, height=280)
+            else:
+                st.success("No at-risk deals! Pipeline looks healthy.")
+
+        st.divider()
+
+        # Rep leaderboard
+        col3, col4 = st.columns(2)
+        with col3:
+            st.markdown("**🏆 Rep Leaderboard**")
+            top = reps_df.nlargest(8, "Quota_Attainment_Pct")[
+                ["Rep_Name", "Region", "Quota_Attainment_Pct", "Deals_Closed", "Win_Rate_Pct"]
+            ].copy()
+            top.columns = ["Rep", "Region", "Attain %", "Deals", "Win Rate %"]
+            st.dataframe(top, use_container_width=True, hide_index=True, height=280)
+
+        with col4:
+            st.markdown("**💬 AI Next Best Action**")
+            if "ae_nba" not in st.session_state:
+                st.session_state.ae_nba = ""
+
+            if st.button("🤖 Get AI Coaching", use_container_width=True):
+                with st.spinner("Analyzing your pipeline..."):
+                    try:
+                        from groq import Groq
+                        import httpx
+                        client = Groq(api_key=os.getenv("GROQ_API_KEY"), http_client=httpx.Client())
+                        
+                        bottom_reps = reps_df.nsmallest(3, "Quota_Attainment_Pct")[
+                            ["Rep_Name", "Quota_Attainment_Pct", "Win_Rate_Pct", "Avg_Sales_Cycle_Days"]
+                        ].to_string()
+
+                        response = client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
+                            messages=[
+                                {"role": "system", "content": "You are an elite sales coach. Give specific, actionable coaching advice based on rep performance data."},
+                                {"role": "user", "content": f"These reps are underperforming:\n{bottom_reps}\n\nGive 3 specific next best actions for each rep. Be direct and tactical."}
+                            ],
+                            max_tokens=600,
+                            temperature=0.3
+                        )
+                        st.session_state.ae_nba = response.choices[0].message.content
+                    except Exception as e:
+                        st.session_state.ae_nba = f"Error: {e}"
+
+            if st.session_state.ae_nba:
+                st.write(st.session_state.ae_nba)
+
+    else:
+        # ── CFO VIEW ─────────────────────────────
+        st.markdown("### 💼 Executive Financial Dashboard")
+
+        total_rev = pnl_df["Revenue_USD"].sum()
+        total_ebitda = pnl_df["EBITDA_USD"].sum()
+        avg_margin = pnl_df["EBITDA_Margin_Pct"].mean().round(1)
+        avg_gross = pnl_df["Gross_Margin_Pct"].mean().round(1)
+        last_nrr = pnl_df["NRR_Pct"].iloc[-1]
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("FY2024 Revenue", f"${total_rev/1e6:.1f}M")
+        k2.metric("EBITDA", f"${total_ebitda/1e6:.1f}M")
+        k3.metric("EBITDA Margin", f"{avg_margin}%")
+        k4.metric("Gross Margin", f"{avg_gross}%")
+        k5.metric("NRR", f"{last_nrr}%")
+
+        st.divider()
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Monthly Revenue vs EBITDA**")
+            fig1 = px.line(pnl_df, x="Month", y=["Revenue_USD", "EBITDA_USD"],
+                          height=250, color_discrete_map={
+                              "Revenue_USD": "#0f3460",
+                              "EBITDA_USD": "#e94560"
+                          })
+            fig1.update_layout(margin=dict(t=10, b=10), legend_title="")
+            st.plotly_chart(fig1, use_container_width=True)
+
+        with col2:
+            st.markdown("**Gross Margin Trend**")
+            fig2 = px.bar(pnl_df, x="Month", y="Gross_Profit_USD",
+                         height=250, color_discrete_sequence=["#0f3460"])
+            fig2.update_layout(margin=dict(t=10, b=10))
+            st.plotly_chart(fig2, use_container_width=True)
+
+        col3, col4 = st.columns(2)
+
+        with col3:
+            st.markdown("**OpEx Breakdown**")
+            last_month = pnl_df.iloc[-1]
+            opex_data = pd.DataFrame({
+                "Category": ["Sales & Marketing", "R&D", "G&A"],
+                "Amount": [
+                    last_month["Sales_Marketing_USD"],
+                    last_month["R&D_USD"],
+                    last_month["G&A_USD"]
+                ]
+            })
+            fig3 = px.pie(opex_data, values="Amount", names="Category",
+                         height=250,
+                         color_discrete_sequence=["#0f3460", "#e94560", "#f5a623"])
+            fig3.update_layout(margin=dict(t=10, b=10))
+            st.plotly_chart(fig3, use_container_width=True)
+
+        with col4:
+            st.markdown("**NRR & Headcount Trend**")
+            fig4 = px.line(pnl_df, x="Month", y=["NRR_Pct", "Headcount"],
+                          height=250, color_discrete_map={
+                              "NRR_Pct": "#0f3460",
+                              "Headcount": "#e94560"
+                          })
+            fig4.update_layout(margin=dict(t=10, b=10), legend_title="")
+            st.plotly_chart(fig4, use_container_width=True)
+
+        st.divider()
+
+        # CFO AI Insights
+        st.markdown("**💬 CFO AI Insights**")
+        if "cfo_insight" not in st.session_state:
+            st.session_state.cfo_insight = ""
+
+        if st.button("🤖 Generate CFO Report", use_container_width=True):
+            with st.spinner("Analyzing financials..."):
+                try:
+                    from groq import Groq
+                    import httpx
+                    client = Groq(api_key=os.getenv("GROQ_API_KEY"), http_client=httpx.Client())
+
+                    pnl_summary = pnl_df[["Month", "Revenue_USD", "EBITDA_USD", "EBITDA_Margin_Pct", "NRR_Pct", "Headcount"]].to_string()
+
+                    response = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": "You are a CFO advisor. Analyze financials and give board-ready insights with specific numbers."},
+                            {"role": "user", "content": f"Analyze this P&L data:\n{pnl_summary}\n\nProvide: 1) Key trends 2) Risk flags 3) Opportunities 4) Board recommendation. Use specific numbers."}
+                        ],
+                        max_tokens=800,
+                        temperature=0.2
+                    )
+                    st.session_state.cfo_insight = response.choices[0].message.content
+                except Exception as e:
+                    st.session_state.cfo_insight = f"Error: {e}"
+
+        if st.session_state.cfo_insight:
+            st.write(st.session_state.cfo_insight)
+        st.divider()
+
+        # ── CFO Copilot Chat ──────────────────────
+        st.markdown("**💬 CFO Copilot — Ask anything about financials**")
+        st.caption("Powered by Groq LLaMA 3.3 70B — financial context included")
+
+        if "cfo_messages" not in st.session_state:
+            st.session_state.cfo_messages = []
+
+        # Sample CFO questions
+        cfo_sample_qs = [
+            "When do we hit 20% EBITDA margin?",
+            "What is our burn rate trend?",
+            "How does our NRR compare to industry?",
+            "Which month had best gross margin?",
+            "What's our revenue per employee trend?",
+            "Are we on track for FY2025 targets?",
+        ]
+        cfo_cols = st.columns(3)
+        for i, q in enumerate(cfo_sample_qs):
+            with cfo_cols[i % 3]:
+                if st.button(q, key=f"cfo_q_{i}", use_container_width=True):
+                    st.session_state.cfo_question = q
+
+        if "cfo_question" not in st.session_state:
+            st.session_state.cfo_question = ""
+
+        # Display chat history
+        for msg in st.session_state.cfo_messages:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+
+        cfo_question = st.chat_input("Ask a financial question...") or st.session_state.cfo_question
+        if st.session_state.cfo_question:
+            st.session_state.cfo_question = ""
+
+        if cfo_question:
+            st.session_state.cfo_messages.append({"role": "user", "content": cfo_question})
+            with st.chat_message("user"):
+                st.write(cfo_question)
+            with st.chat_message("assistant"):
+                with st.spinner("Analyzing financials..."):
+                    try:
+                        from groq import Groq
+                        import httpx
+                        client = Groq(api_key=os.getenv("GROQ_API_KEY"), http_client=httpx.Client())
+
+                        pnl_context = pnl_df[["Month", "Revenue_USD", "EBITDA_USD",
+                                              "EBITDA_Margin_Pct", "Gross_Margin_Pct",
+                                              "NRR_Pct", "Headcount", "Net_Income_USD"]].to_string()
+
+                        response = client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
+                            messages=[
+                                {"role": "system", "content": "You are an expert CFO advisor for NexaCore Technologies. Answer financial questions using the P&L data provided. Always cite specific numbers. Be concise and board-ready."},
+                                {"role": "user", "content": f"P&L Data:\n{pnl_context}\n\nQuestion: {cfo_question}"}
+                            ],
+                            temperature=0.2,
+                            max_tokens=600
+                        )
+                        answer = response.choices[0].message.content
+                        st.write(answer)
+                        st.session_state.cfo_messages.append({
+                            "role": "assistant",
+                            "content": answer
+                        })
+                    except Exception as e:
+                        st.error(f"Error: {e}") 
 
 elif page == "❓ AskHR":
     st.markdown("## ❓ AskHR")

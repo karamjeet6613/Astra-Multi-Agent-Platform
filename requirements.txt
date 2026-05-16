@@ -1,0 +1,13 @@
+streamlit
+python-dotenv
+google-genai
+supabase
+pypdf
+groq
+pandas
+plotly
+openpyxl
+langgraph
+tavily-python
+ragas
+httpx

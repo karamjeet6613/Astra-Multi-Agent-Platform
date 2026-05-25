@@ -11,3 +11,5 @@ langgraph
 tavily-python
 ragas
 httpx
+gspread
+google-auth
